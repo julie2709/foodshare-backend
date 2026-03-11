@@ -90,15 +90,16 @@ public function create(Request $request, EntityManagerInterface $em): JsonRespon
 
    $file = $photos[0];
 
-   return $this->json([
-    'originalName' => $file->getClientOriginalName(),
-    'size_bytes' => $file->getSize(),
-    'size_kb' => $file->getSize() !== null ? round($file->getSize() / 1024, 2) : null,
-    'size_mb' => $file->getSize() !== null ? round($file->getSize() / 1024 / 1024, 3) : null,
-    'mime_detected' => $file->getMimeType(),
-    'client_mime' => $file->getClientMimeType(),
-    'error_code' => $file->getError(),
-]);
+// test temporaire
+//    return $this->json([
+//     'originalName' => $file->getClientOriginalName(),
+//     'size_bytes' => $file->getSize(),
+//     'size_kb' => $file->getSize() !== null ? round($file->getSize() / 1024, 2) : null,
+//     'size_mb' => $file->getSize() !== null ? round($file->getSize() / 1024 / 1024, 3) : null,
+//     'mime_detected' => $file->getMimeType(),
+//     'client_mime' => $file->getClientMimeType(),
+//     'error_code' => $file->getError(),
+// ]);
 
         // Vérification erreur upload PHP
         if ($file->getError() !== UPLOAD_ERR_OK) {
