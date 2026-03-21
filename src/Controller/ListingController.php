@@ -4,6 +4,7 @@ namespace App\Controller;
 
 use App\Entity\Listing;
 use App\Entity\ListingPhoto;
+use App\Enum\ListingStatus;
 use App\Repository\ListingRepository;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
@@ -22,7 +23,10 @@ final class ListingController extends AbstractController
         $listings = $repo->findBy([], ['id' => 'DESC']);
         $baseUrl = $request->getSchemeAndHttpHost();
 
-        $data = array_map(fn(Listing $l) => $this->serializeListing($l, $baseUrl, true), $listings);
+        $data = array_map(
+            fn (Listing $listing) => $this->serializeListing($listing, $baseUrl, true),
+            $listings
+        );
 
         return $this->json($data);
     }
@@ -31,122 +35,266 @@ final class ListingController extends AbstractController
     public function show(Listing $listing, Request $request): JsonResponse
     {
         $baseUrl = $request->getSchemeAndHttpHost();
+
         return $this->json($this->serializeListing($listing, $baseUrl, false));
     }
 
-#[IsGranted('ROLE_USER')]
-#[Route('', methods: ['POST'])]
-public function create(Request $request, EntityManagerInterface $em): JsonResponse
-{
-    $user = $this->getUser();
-    if (!$user) {
-        return $this->json(['message' => 'Non authentifié'], 401);
-    }
-
-    $title = trim((string) $request->request->get('title'));
-    $category = trim((string) $request->request->get('category'));
-    $postalCode = trim((string) $request->request->get('postalCode'));
-
-    if ($title === '' || $category === '' || $postalCode === '') {
-        return $this->json(['message' => 'title, category et postalCode sont obligatoires'], 422);
-    }
-
-    if (!preg_match('/^69\d{3}$/', $postalCode)) {
-        return $this->json(['message' => 'Zone non autorisée (postalCode doit être un code postal du Rhône)'], 422);
-    }
-
-    $expiryDate = $request->request->get('expiryDate');
-    $parsedExpiryDate = null;
-
-    if ($expiryDate) {
-        try {
-            $parsedExpiryDate = new \DateTimeImmutable($expiryDate);
-            $today = new \DateTimeImmutable('today');
-
-            if ($parsedExpiryDate < $today) {
-                return $this->json(['message' => 'expiryDate ne peut pas être dans le passé'], 422);
-            }
-        } catch (\Throwable) {
-            return $this->json(['message' => 'expiryDate invalide (attendu: YYYY-MM-DD)'], 422);
+    #[IsGranted('ROLE_USER')]
+    #[Route('', methods: ['POST'])]
+    public function create(Request $request, EntityManagerInterface $em): JsonResponse
+    {
+        $user = $this->getUser();
+        if (!$user) {
+            return $this->json(['message' => 'Non authentifié'], 401);
         }
-    }
 
-    $photos = $request->files->get('photos');
+        $title = trim((string) $request->request->get('title'));
+        $category = trim((string) $request->request->get('category'));
+        $postalCode = trim((string) $request->request->get('postalCode'));
 
-    if (!$photos) {
-        return $this->json(['message' => 'Une photo est obligatoire pour créer une annonce.'], 422);
-    }
+        if ($title === '' || $category === '' || $postalCode === '') {
+            return $this->json(['message' => 'title, category et postalCode sont obligatoires'], 422);
+        }
 
-    if ($photos instanceof UploadedFile) {
-        $photos = [$photos];
-    }
+        if (!preg_match('/^69\d{3}$/', $postalCode)) {
+            return $this->json(['message' => 'Zone non autorisée (postalCode doit être un code postal du Rhône)'], 422);
+        }
 
-    if (!is_array($photos) || count($photos) !== 1) {
-        return $this->json(['message' => 'Une seule photo est autorisée.'], 422);
-    }
+        $expiryDate = $request->request->get('expiryDate');
+        $parsedExpiryDate = null;
 
-    // verif upload php
+        if ($expiryDate) {
+            try {
+                $parsedExpiryDate = new \DateTimeImmutable($expiryDate);
+                $today = new \DateTimeImmutable('today');
 
+                if ($parsedExpiryDate < $today) {
+                    return $this->json(['message' => 'expiryDate ne peut pas être dans le passé'], 422);
+                }
+            } catch (\Throwable) {
+                return $this->json(['message' => 'expiryDate invalide (attendu: YYYY-MM-DD)'], 422);
+            }
+        }
 
-   $file = $photos[0];
+        $photos = $request->files->get('photos');
 
-// test temporaire
-//    return $this->json([
-//     'originalName' => $file->getClientOriginalName(),
-//     'size_bytes' => $file->getSize(),
-//     'size_kb' => $file->getSize() !== null ? round($file->getSize() / 1024, 2) : null,
-//     'size_mb' => $file->getSize() !== null ? round($file->getSize() / 1024 / 1024, 3) : null,
-//     'mime_detected' => $file->getMimeType(),
-//     'client_mime' => $file->getClientMimeType(),
-//     'error_code' => $file->getError(),
-// ]);
+        if (!$photos) {
+            return $this->json(['message' => 'Une photo est obligatoire pour créer une annonce.'], 422);
+        }
 
-        // Vérification erreur upload PHP
+        if ($photos instanceof UploadedFile) {
+            $photos = [$photos];
+        }
+
+        if (!is_array($photos) || count($photos) !== 1) {
+            return $this->json(['message' => 'Une seule photo est autorisée.'], 422);
+        }
+
+        $file = $photos[0];
+
+        if (!$file instanceof UploadedFile) {
+            return $this->json(['message' => 'Fichier photo invalide.'], 422);
+        }
+
         if ($file->getError() !== UPLOAD_ERR_OK) {
             return $this->json([
                 'message' => 'Erreur lors de l\'upload du fichier.',
-                'error_code' => $file->getError()
+                'error_code' => $file->getError(),
             ], 422);
         }
 
-        // Validation personnalisée (taille + mime)
         $error = $this->validateImage($file);
         if ($error !== null) {
             return $this->json(['message' => $error], 422);
         }
 
-    $listing = new Listing();
-    $listing->setUser($user);
-    $listing->setTitle($title);
-    $listing->setCategory($category);
-    $listing->setPostalCode($postalCode);
-    $listing->setDescription($request->request->get('description'));
-    $listing->setQuantity($request->request->get('quantity'));
-    $listing->setCity($request->request->get('city'));
-    $listing->setPickupInfo($request->request->get('pickupInfo'));
+        $listing = new Listing();
+        $listing->setUser($user);
+        $listing->setTitle($title);
+        $listing->setCategory($category);
+        $listing->setPostalCode($postalCode);
+        $listing->setDescription($request->request->get('description'));
+        $listing->setQuantity($request->request->get('quantity'));
+        $listing->setCity($request->request->get('city'));
+        $listing->setPickupInfo($request->request->get('pickupInfo'));
 
-    if ($parsedExpiryDate) {
-        $listing->setExpiryDate($parsedExpiryDate);
+        if ($parsedExpiryDate) {
+            $listing->setExpiryDate($parsedExpiryDate);
+        }
+
+        // Optionnel : autoriser status à la création
+        $status = $request->request->get('status');
+        if ($status !== null && $status !== '') {
+            $enumStatus = ListingStatus::tryFrom((string) $status);
+
+            if (!$enumStatus) {
+                return $this->json([
+                    'message' => 'status invalide. Valeurs autorisées : DISPONIBLE, RESERVEE, DONNEE'
+                ], 422);
+            }
+
+            $listing->setStatus($enumStatus);
+        }
+
+        $em->persist($listing);
+        $em->flush();
+
+        $relativePath = $this->storeListingPhoto($file, (int) $listing->getId());
+
+        $photo = new ListingPhoto();
+        $photo->setUrl($relativePath);
+        $listing->addListingPhoto($photo);
+
+        $em->flush();
+
+        $baseUrl = $request->getSchemeAndHttpHost();
+
+        return $this->json($this->serializeListing($listing, $baseUrl, false), 201);
     }
 
-    $em->persist($listing);
-    $em->flush();
+    #[IsGranted('ROLE_USER')]
+    #[Route('/{id}', methods: ['PUT'])]
+    public function update(Listing $listing, Request $request, EntityManagerInterface $em): JsonResponse
+    {
+        $user = $this->getUser();
+        if (!$user) {
+            return $this->json(['message' => 'Non authentifié'], 401);
+        }
 
-    $relativePath = $this->storeListingPhoto($file, (int) $listing->getId());
+        if ($listing->getUser()?->getId() !== $user->getId()) {
+            return $this->json(['message' => 'Accès refusé'], 403);
+        }
 
-    $photo = new ListingPhoto();
-    $photo->setUrl($relativePath);
-    $listing->addListingPhoto($photo);
+        $title = trim((string) $request->request->get('title', $listing->getTitle()));
+        $category = trim((string) $request->request->get('category', $listing->getCategory()));
+        $postalCode = trim((string) $request->request->get('postalCode', $listing->getPostalCode()));
 
-    $em->flush();
+        if ($title === '' || $category === '' || $postalCode === '') {
+            return $this->json(['message' => 'title, category et postalCode sont obligatoires'], 422);
+        }
 
-    $baseUrl = $request->getSchemeAndHttpHost();
-    return $this->json($this->serializeListing($listing, $baseUrl, false), 201);
-}
+        if (!preg_match('/^69\d{3}$/', $postalCode)) {
+            return $this->json(['message' => 'Zone non autorisée (postalCode doit être un code postal du Rhône)'], 422);
+        }
+
+        $expiryDate = $request->request->get('expiryDate');
+        $parsedExpiryDate = $listing->getExpiryDate();
+
+        if ($expiryDate !== null && $expiryDate !== '') {
+            try {
+                $parsedExpiryDate = new \DateTimeImmutable($expiryDate);
+                $today = new \DateTimeImmutable('today');
+
+                if ($parsedExpiryDate < $today) {
+                    return $this->json(['message' => 'expiryDate ne peut pas être dans le passé'], 422);
+                }
+            } catch (\Throwable) {
+                return $this->json(['message' => 'expiryDate invalide (attendu: YYYY-MM-DD)'], 422);
+            }
+        }
+
+        $listing->setTitle($title);
+        $listing->setCategory($category);
+        $listing->setPostalCode($postalCode);
+        $listing->setDescription($request->request->get('description', $listing->getDescription()));
+        $listing->setQuantity($request->request->get('quantity', $listing->getQuantity()));
+        $listing->setCity($request->request->get('city', $listing->getCity()));
+        $listing->setPickupInfo($request->request->get('pickupInfo', $listing->getPickupInfo()));
+        $listing->setExpiryDate($parsedExpiryDate);
+
+        // Gestion du status enum
+        $status = $request->request->get('status');
+        if ($status !== null && $status !== '') {
+            $enumStatus = ListingStatus::tryFrom((string) $status);
+
+            if (!$enumStatus) {
+                return $this->json([
+                    'message' => 'status invalide. Valeurs autorisées : DISPONIBLE, RESERVEE, DONNEE'
+                ], 422);
+            }
+
+            $listing->setStatus($enumStatus);
+        }
+
+        // Photo facultative en update : si fournie, on remplace l’ancienne
+        $photos = $request->files->get('photos');
+
+        if ($photos instanceof UploadedFile) {
+            $photos = [$photos];
+        }
+
+        if ($photos !== null) {
+            if (!is_array($photos) || count($photos) !== 1) {
+                return $this->json([
+                    'message' => 'Une seule photo est autorisée.'
+                ], 422);
+            }
+
+            $file = $photos[0];
+
+            if (!$file instanceof UploadedFile) {
+                return $this->json(['message' => 'Fichier photo invalide.'], 422);
+            }
+
+            if ($file->getError() !== UPLOAD_ERR_OK) {
+                return $this->json([
+                    'message' => 'Erreur lors de l\'upload du fichier.',
+                    'error_code' => $file->getError(),
+                ], 422);
+            }
+
+            $error = $this->validateImage($file);
+            if ($error !== null) {
+                return $this->json(['message' => $error], 422);
+            }
+
+            foreach ($listing->getListingPhotos() as $oldPhoto) {
+                $this->deletePhysicalPhoto($oldPhoto->getUrl());
+                $em->remove($oldPhoto);
+            }
+            $em->flush();
+
+            $relativePath = $this->storeListingPhoto($file, (int) $listing->getId());
+
+            $photo = new ListingPhoto();
+            $photo->setUrl($relativePath);
+            $listing->addListingPhoto($photo);
+        }
+
+        $em->flush();
+
+        $baseUrl = $request->getSchemeAndHttpHost();
+
+        return $this->json($this->serializeListing($listing, $baseUrl, false), 200);
+    }
+
+    #[IsGranted('ROLE_USER')]
+    #[Route('/{id}', methods: ['DELETE'])]
+    public function delete(Listing $listing, EntityManagerInterface $em): JsonResponse
+    {
+        $user = $this->getUser();
+        if (!$user) {
+            return $this->json(['message' => 'Non authentifié'], 401);
+        }
+
+        if ($listing->getUser()?->getId() !== $user->getId()) {
+            return $this->json(['message' => 'Accès refusé'], 403);
+        }
+
+        foreach ($listing->getListingPhotos() as $photo) {
+            $this->deletePhysicalPhoto($photo->getUrl());
+        }
+
+        $this->deleteListingDirectory((int) $listing->getId());
+
+        $em->remove($listing);
+        $em->flush();
+
+        return $this->json(['message' => 'Annonce supprimée avec succès'], 200);
+    }
 
     private function storeListingPhoto(UploadedFile $file, int $listingId): string
     {
-        // Dossier final : public/uploads/listings/{id}/
         $publicDir = $this->getParameter('kernel.project_dir') . '/public';
         $dir = $publicDir . '/uploads/listings/' . $listingId;
 
@@ -159,214 +307,90 @@ public function create(Request $request, EntityManagerInterface $em): JsonRespon
 
         $file->move($dir, $name);
 
-        // Stocké en DB (chemin relatif accessible)
         return 'uploads/listings/' . $listingId . '/' . $name;
     }
 
-    private function serializeListing(Listing $l, string $baseUrl, bool $isList): array
+    private function serializeListing(Listing $listing, string $baseUrl, bool $isList): array
     {
         $photos = [];
-        foreach ($l->getListingPhotos() as $p) {
-            $url = $p->getUrl();
+        foreach ($listing->getListingPhotos() as $photo) {
+            $url = $photo->getUrl();
             $photos[] = [
-                'id' => $p->getId(),
+                'id' => $photo->getId(),
                 'url' => $url,
                 'publicUrl' => $url ? ($baseUrl . '/' . ltrim($url, '/')) : null,
             ];
         }
 
         return [
-            'id' => $l->getId(),
-            'title' => $l->getTitle(),
-            'description' => $l->getDescription(),
-            'category' => $l->getCategory(),
-            'quantity' => $l->getQuantity(),
-            'expiryDate' => $l->getExpiryDate()?->format('Y-m-d'),
-            'postalCode' => $l->getPostalCode(),
-            'city' => $l->getCity(),
-            'pickupInfo' => $l->getPickupInfo(),
-            'status' => $l->getStatus(),
-            'createdAt' => $l->getCreatedAt()?->format('Y-m-d H:i:s'),
+            'id' => $listing->getId(),
+            'title' => $listing->getTitle(),
+            'description' => $listing->getDescription(),
+            'category' => $listing->getCategory(),
+            'quantity' => $listing->getQuantity(),
+            'expiryDate' => $listing->getExpiryDate()?->format('Y-m-d'),
+            'postalCode' => $listing->getPostalCode(),
+            'city' => $listing->getCity(),
+            'pickupInfo' => $listing->getPickupInfo(),
+            'status' => $listing->getStatus()?->value,
+            'createdAt' => $listing->getCreatedAt()?->format('Y-m-d H:i:s'),
             'user' => $isList ? null : [
-                'id' => $l->getUser()?->getId(),
-                'email' => $l->getUser()?->getEmail(),
-                'pseudo' => method_exists($l->getUser(), 'getPseudo') ? $l->getUser()?->getPseudo() : null,
+                'id' => $listing->getUser()?->getId(),
+                'email' => $listing->getUser()?->getEmail(),
+                'pseudo' => method_exists($listing->getUser(), 'getPseudo')
+                    ? $listing->getUser()?->getPseudo()
+                    : null,
             ],
             'photos' => $photos,
         ];
     }
 
     private function validateImage(UploadedFile $file): ?string
-        {
-            if ($file->getSize() !== null && $file->getSize() > 10 * 1024 * 1024) {
-                return 'Fichier trop volumineux (max 5MB).';
-            }
-
-            $mime = $file->getMimeType();
-            $allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/jpg'];
-
-            if (!$mime || !in_array($mime, $allowed, true)) {
-                return 'Format non supporté (jpeg/png/webp).';
-            }
-
-            return null;
+    {
+        if ($file->getSize() !== null && $file->getSize() > 10 * 1024 * 1024) {
+            return 'Fichier trop volumineux (max 10MB).';
         }
 
+        $mime = $file->getMimeType();
+        $allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/jpg'];
 
-// endpoint PUT
-#[IsGranted('ROLE_USER')]
-#[Route('/{id}', methods: ['PUT'])]
-public function update(Listing $listing, Request $request, EntityManagerInterface $em): JsonResponse
-{
-    $user = $this->getUser();
-    if (!$user) {
-        return $this->json(['message' => 'Non authentifié'], 401);
-    }
-
-    if ($listing->getUser()?->getId() !== $user->getId()) {
-        return $this->json(['message' => 'Accès refusé'], 403);
-    }
-
-    $title = trim((string) $request->request->get('title', $listing->getTitle()));
-    $category = trim((string) $request->request->get('category', $listing->getCategory()));
-    $postalCode = trim((string) $request->request->get('postalCode', $listing->getPostalCode()));
-
-    if ($title === '' || $category === '' || $postalCode === '') {
-        return $this->json(['message' => 'title, category et postalCode sont obligatoires'], 422);
-    }
-
-    if (!preg_match('/^69\d{3}$/', $postalCode)) {
-        return $this->json(['message' => 'Zone non autorisée (postalCode doit être un code postal du Rhône)'], 422);
-    }
-
-    $expiryDate = $request->request->get('expiryDate');
-    $parsedExpiryDate = $listing->getExpiryDate();
-
-    if ($expiryDate !== null && $expiryDate !== '') {
-        try {
-            $parsedExpiryDate = new \DateTimeImmutable($expiryDate);
-            $today = new \DateTimeImmutable('today');
-
-            if ($parsedExpiryDate < $today) {
-                return $this->json(['message' => 'expiryDate ne peut pas être dans le passé'], 422);
-            }
-        } catch (\Throwable) {
-            return $this->json(['message' => 'expiryDate invalide (attendu: YYYY-MM-DD)'], 422);
-        }
-    }
-
-    $listing->setTitle($title);
-    $listing->setCategory($category);
-    $listing->setPostalCode($postalCode);
-    $listing->setDescription($request->request->get('description', $listing->getDescription()));
-    $listing->setQuantity($request->request->get('quantity', $listing->getQuantity()));
-    $listing->setCity($request->request->get('city', $listing->getCity()));
-    $listing->setPickupInfo($request->request->get('pickupInfo', $listing->getPickupInfo()));
-    $listing->setExpiryDate($parsedExpiryDate);
-
-    // Photo facultative en update : si fournie, on remplace l’ancienne
-    $photos = $request->files->get('photos');
-
-    if ($photos instanceof UploadedFile) {
-        $photos = [$photos];
-    }
-
-    if ($photos !== null) {
-        if (!is_array($photos) || count($photos) !== 1) {
-            return $this->json([
-                'message' => 'Une seule photo est autorisée.'
-            ], 422);
+        if (!$mime || !in_array($mime, $allowed, true)) {
+            return 'Format non supporté (jpeg/png/webp).';
         }
 
-        $file = $photos[0];
+        return null;
+    }
 
-        if (!$file instanceof UploadedFile) {
-            return $this->json(['message' => 'Fichier photo invalide.'], 422);
+    private function deletePhysicalPhoto(?string $relativePath): void
+    {
+        if (!$relativePath) {
+            return;
         }
 
-        $error = $this->validateImage($file);
-        if ($error !== null) {
-            return $this->json(['message' => $error], 422);
-        }
+        $fullPath = $this->getParameter('kernel.project_dir') . '/public/' . ltrim($relativePath, '/');
 
-        // Supprimer anciennes photos physiques + DB
-        foreach ($listing->getListingPhotos() as $oldPhoto) {
-            $this->deletePhysicalPhoto($oldPhoto->getUrl());
-            $em->remove($oldPhoto);
-        }
-        $em->flush();
-
-        // Ajouter la nouvelle photo
-        $relativePath = $this->storeListingPhoto($file, (int) $listing->getId());
-
-        $photo = new ListingPhoto();
-        $photo->setUrl($relativePath);
-        $listing->addListingPhoto($photo);
-    }
-
-    $em->flush();
-
-    $baseUrl = $request->getSchemeAndHttpHost();
-    return $this->json($this->serializeListing($listing, $baseUrl, false), 200);
-}
-
-// Endponit Delete
-#[IsGranted('ROLE_USER')]
-#[Route('/{id}', methods: ['DELETE'])]
-public function delete(Listing $listing, EntityManagerInterface $em): JsonResponse
-{
-    $user = $this->getUser();
-    if (!$user) {
-        return $this->json(['message' => 'Non authentifié'], 401);
-    }
-
-    if ($listing->getUser()?->getId() !== $user->getId()) {
-        return $this->json(['message' => 'Accès refusé'], 403);
-    }
-
-    foreach ($listing->getListingPhotos() as $photo) {
-        $this->deletePhysicalPhoto($photo->getUrl());
-    }
-
-    $this->deleteListingDirectory((int) $listing->getId());
-
-    $em->remove($listing);
-    $em->flush();
-
-    return $this->json(['message' => 'Annonce supprimée avec succès'], 200);
-}
-
-// Helpers
-private function deletePhysicalPhoto(?string $relativePath): void
-{
-    if (!$relativePath) {
-        return;
-    }
-
-    $fullPath = $this->getParameter('kernel.project_dir') . '/public/' . ltrim($relativePath, '/');
-
-    if (is_file($fullPath)) {
-        @unlink($fullPath);
-    }
-}
-
-private function deleteListingDirectory(int $listingId): void
-{
-    $dir = $this->getParameter('kernel.project_dir') . '/public/uploads/listings/' . $listingId;
-
-    if (!is_dir($dir)) {
-        return;
-    }
-
-    $files = array_diff(scandir($dir), ['.', '..']);
-
-    foreach ($files as $file) {
-        $fullPath = $dir . '/' . $file;
         if (is_file($fullPath)) {
             @unlink($fullPath);
         }
     }
 
-    @rmdir($dir);
-}
+    private function deleteListingDirectory(int $listingId): void
+    {
+        $dir = $this->getParameter('kernel.project_dir') . '/public/uploads/listings/' . $listingId;
+
+        if (!is_dir($dir)) {
+            return;
+        }
+
+        $files = array_diff(scandir($dir), ['.', '..']);
+
+        foreach ($files as $file) {
+            $fullPath = $dir . '/' . $file;
+            if (is_file($fullPath)) {
+                @unlink($fullPath);
+            }
+        }
+
+        @rmdir($dir);
+    }
 }

@@ -3,6 +3,7 @@
 namespace App\Entity;
 
 use App\Repository\ListingRepository;
+use App\Enum\ListingStatus;
 use Doctrine\Common\Collections\ArrayCollection;
 use Doctrine\Common\Collections\Collection;
 use Doctrine\DBAL\Types\Types;
@@ -40,8 +41,8 @@ class Listing
     #[ORM\Column(type: Types::TEXT, nullable: true)]
     private ?string $pickupInfo = null;
 
-    #[ORM\Column(length: 30)]
-    private ?string $status = null;
+   #[ORM\Column(enumType: ListingStatus::class)]
+    private ?ListingStatus $status = null;
 
     #[ORM\Column]
     private ?\DateTimeImmutable $createdAt = null;
@@ -65,14 +66,21 @@ class Listing
     #[ORM\OneToMany(targetEntity: DonationRequest::class, mappedBy: 'listing', orphanRemoval: true)]
     private Collection $donationRequests;
 
+    /**
+     * @var Collection<int, Notification>
+     */
+    #[ORM\OneToMany(targetEntity: Notification::class, mappedBy: 'listing')]
+    private Collection $notifications;
+
 
      public function __construct()
     {
       
       $this->createdAt = new \DateTimeImmutable();
-      $this->status = 'DISPONIBLE';
+     $this->status = ListingStatus::DISPONIBLE;
       $this->listingPhotos = new ArrayCollection();
       $this->donationRequests = new ArrayCollection();
+      $this->notifications = new ArrayCollection();
     }
 
     public function getId(): ?int
@@ -176,12 +184,11 @@ class Listing
         return $this;
     }
 
-    public function getStatus(): ?string
+   public function getStatus(): ?ListingStatus
     {
         return $this->status;
     }
-
-    public function setStatus(string $status): static
+    public function setStatus(ListingStatus $status): static
     {
         $this->status = $status;
 
@@ -266,6 +273,36 @@ class Listing
             // set the owning side to null (unless already changed)
             if ($donationRequest->getListing() === $this) {
                 $donationRequest->setListing(null);
+            }
+        }
+
+        return $this;
+    }
+
+    /**
+     * @return Collection<int, Notification>
+     */
+    public function getNotifications(): Collection
+    {
+        return $this->notifications;
+    }
+
+    public function addNotification(Notification $notification): static
+    {
+        if (!$this->notifications->contains($notification)) {
+            $this->notifications->add($notification);
+            $notification->setListing($this);
+        }
+
+        return $this;
+    }
+
+    public function removeNotification(Notification $notification): static
+    {
+        if ($this->notifications->removeElement($notification)) {
+            // set the owning side to null (unless already changed)
+            if ($notification->getListing() === $this) {
+                $notification->setListing(null);
             }
         }
 

@@ -7,7 +7,7 @@ use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\Routing\Attribute\Route;
 
-final class AuthController extends AbstractController
+final class MecontrollerController extends AbstractController
 {
     #[Route('/api/auth/me', methods: ['GET'])]
     public function me(): JsonResponse
@@ -25,7 +25,7 @@ final class AuthController extends AbstractController
             'city' => $user->getCity(),
             'postalCode' => $user->getPostalCode(),
             'roles' => $user->getRoles(),
-            'createdAt' => $user->getCreatedAt()->format(DATE_ATOM),
+            'createdAt' => $user->getCreatedAt()?->format(DATE_ATOM),
         ]);
     }
 }

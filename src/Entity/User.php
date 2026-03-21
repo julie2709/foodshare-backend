@@ -72,6 +72,18 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface
     #[ORM\OneToMany(targetEntity: Report::class, mappedBy: 'reporter', orphanRemoval: true)]
     private Collection $reports;
 
+    /**
+     * @var Collection<int, Notification>
+     */
+    #[ORM\OneToMany(targetEntity: Notification::class, mappedBy: 'recipient', orphanRemoval: true)]
+    private Collection $notifications;
+
+    /**
+     * @var Collection<int, Notification>
+     */
+    #[ORM\OneToMany(targetEntity: Notification::class, mappedBy: 'actor')]
+    private Collection $notificationsActor;
+
     public function __construct()
     {
         $this->createdAt = new \DateTimeImmutable();
@@ -80,6 +92,8 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface
         $this->topics = new ArrayCollection();
         $this->posts = new ArrayCollection();
         $this->reports = new ArrayCollection();
+        $this->notifications = new ArrayCollection();
+        $this->notificationsActor = new ArrayCollection();
     }
 
     public function getId(): ?int
@@ -324,6 +338,66 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface
             // set the owning side to null (unless already changed)
             if ($report->getReporter() === $this) {
                 $report->setReporter(null);
+            }
+        }
+
+        return $this;
+    }
+
+    /**
+     * @return Collection<int, Notification>
+     */
+    public function getNotifications(): Collection
+    {
+        return $this->notifications;
+    }
+
+    public function addNotification(Notification $notification): static
+    {
+        if (!$this->notifications->contains($notification)) {
+            $this->notifications->add($notification);
+            $notification->setRecipient($this);
+        }
+
+        return $this;
+    }
+
+    public function removeNotification(Notification $notification): static
+    {
+        if ($this->notifications->removeElement($notification)) {
+            // set the owning side to null (unless already changed)
+            if ($notification->getRecipient() === $this) {
+                $notification->setRecipient(null);
+            }
+        }
+
+        return $this;
+    }
+
+    /**
+     * @return Collection<int, Notification>
+     */
+    public function getNotificationsActor(): Collection
+    {
+        return $this->notificationsActor;
+    }
+
+    public function addNotificationsActor(Notification $notificationsActor): static
+    {
+        if (!$this->notificationsActor->contains($notificationsActor)) {
+            $this->notificationsActor->add($notificationsActor);
+            $notificationsActor->setActor($this);
+        }
+
+        return $this;
+    }
+
+    public function removeNotificationsActor(Notification $notificationsActor): static
+    {
+        if ($this->notificationsActor->removeElement($notificationsActor)) {
+            // set the owning side to null (unless already changed)
+            if ($notificationsActor->getActor() === $this) {
+                $notificationsActor->setActor(null);
             }
         }
 
