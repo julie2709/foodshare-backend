@@ -122,7 +122,7 @@ final class DonationRequestController extends AbstractController
 
         return $this->json([
             'id' => $listing->getId(),
-            'status' => $listing->getStatus(),
+            'status' => $listing->getStatus()?->value,
             'message' => 'Annonce remise en disponible.',
         ]);
     }
@@ -143,11 +143,14 @@ final class DonationRequestController extends AbstractController
 
         return $this->json([
             'id' => $listing->getId(),
-            'status' => $listing->getStatus(),
+            'status' => $listing->getStatus()?->value,
             'message' => 'Annonce marquée comme donnée.',
         ]);
     }
 
+    /**
+     * Sérialisation manuelle propre pour éviter les surprises avec les enums.
+     */
     private function serializeDonationRequest(DonationRequest $donationRequest): array
     {
         $listing = $donationRequest->getListing();
@@ -156,12 +159,12 @@ final class DonationRequestController extends AbstractController
         return [
             'id' => $donationRequest->getId(),
             'message' => $donationRequest->getMessage(),
-            'status' => $donationRequest->getStatus(),
+            'status' => $donationRequest->getStatus()?->value,
             'createdAt' => $donationRequest->getCreatedAt()?->format('Y-m-d H:i:s'),
             'listing' => [
                 'id' => $listing?->getId(),
                 'title' => $listing?->getTitle(),
-                'status' => $listing?->getStatus(),
+                'status' => $listing?->getStatus()?->value,
             ],
             'user' => [
                 'id' => $user?->getId(),

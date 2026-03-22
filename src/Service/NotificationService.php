@@ -15,6 +15,11 @@ class NotificationService
     ) {
     }
 
+    /**
+     * Crée une notification métier et la persiste.
+     * Le flush est volontairement laissé au service appelant
+     * pour permettre de grouper plusieurs opérations dans une transaction.
+     */
     public function create(
         User $recipient,
         string $type,
@@ -44,7 +49,7 @@ class NotificationService
             $notification->setDonationRequest($donationRequest);
         }
 
-        if ($data) {
+        if ($data !== null) {
             $notification->setData($data);
         }
 

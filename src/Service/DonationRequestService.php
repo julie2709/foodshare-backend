@@ -6,6 +6,8 @@ use App\Entity\DonationRequest;
 use App\Entity\Listing;
 use App\Entity\Notification;
 use App\Entity\User;
+use App\Enum\DonationRequestStatus;
+use App\Enum\ListingStatus;
 use App\Repository\DonationRequestRepository;
 use App\Repository\ListingRepository;
 use Doctrine\ORM\EntityManagerInterface;
@@ -37,7 +39,7 @@ class DonationRequestService
             throw new BadRequestHttpException('Vous ne pouvez pas demander votre propre annonce.');
         }
 
-        if ($listing->getStatus() !== Listing::STATUS_DISPONIBLE) {
+        if ($listing->getStatus() !== ListingStatus::DISPONIBLE) {
             throw new BadRequestHttpException('Cette annonce n’est plus disponible.');
         }
 
@@ -50,9 +52,15 @@ class DonationRequestService
         $donationRequest->setListing($listing);
         $donationRequest->setUser($currentUser);
         $donationRequest->setMessage($message);
-        $donationRequest->setStatus(DonationRequest::STATUS_PENDING);
+        $donationRequest->setStatus(DonationRequestStatus::PENDING);
 
         $this->em->persist($donationRequest);
+
+        /**
+         * Flush ici pour garantir que l'ID de la demande existe
+         * avant d'être utilisé dans la notification/data.
+         */
+        $this->em->flush();
 
         if ($owner) {
             $this->notificationService->create(
@@ -111,23 +119,23 @@ class DonationRequestService
             throw new AccessDeniedHttpException('Accès refusé.');
         }
 
-        if ($donationRequest->getStatus() !== DonationRequest::STATUS_PENDING) {
+        if ($donationRequest->getStatus() !== DonationRequestStatus::PENDING) {
             throw new BadRequestHttpException('Seule une demande PENDING peut être acceptée.');
         }
 
-        if ($listing->getStatus() !== Listing::STATUS_DISPONIBLE) {
+        if ($listing->getStatus() !== ListingStatus::DISPONIBLE) {
             throw new BadRequestHttpException('Cette annonce n’est plus disponible.');
         }
 
         $this->em->wrapInTransaction(function () use ($donationRequest, $listing, $currentUser) {
-            $donationRequest->setStatus(DonationRequest::STATUS_ACCEPTED);
-            $listing->setStatus(Listing::STATUS_RESERVEE);
+            $donationRequest->setStatus(DonationRequestStatus::ACCEPTED);
+            $listing->setStatus(ListingStatus::RESERVEE);
 
             $otherPendingRequests = $this->donationRequestRepository
                 ->findOtherPendingByListing($listing, $donationRequest->getId());
 
             foreach ($otherPendingRequests as $otherRequest) {
-                $otherRequest->setStatus(DonationRequest::STATUS_REFUSED);
+                $otherRequest->setStatus(DonationRequestStatus::REFUSED);
 
                 $otherUser = $otherRequest->getUser();
                 if ($otherUser) {
@@ -193,11 +201,11 @@ class DonationRequestService
             throw new AccessDeniedHttpException('Accès refusé.');
         }
 
-        if ($donationRequest->getStatus() !== DonationRequest::STATUS_PENDING) {
+        if ($donationRequest->getStatus() !== DonationRequestStatus::PENDING) {
             throw new BadRequestHttpException('Seule une demande PENDING peut être refusée.');
         }
 
-        $donationRequest->setStatus(DonationRequest::STATUS_REFUSED);
+        $donationRequest->setStatus(DonationRequestStatus::REFUSED);
 
         $requestUser = $donationRequest->getUser();
         if ($requestUser) {
@@ -236,11 +244,11 @@ class DonationRequestService
             throw new AccessDeniedHttpException('Accès refusé.');
         }
 
-        if ($donationRequest->getStatus() !== DonationRequest::STATUS_PENDING) {
+        if ($donationRequest->getStatus() !== DonationRequestStatus::PENDING) {
             throw new BadRequestHttpException('Seule une demande PENDING peut être annulée.');
         }
 
-        $donationRequest->setStatus(DonationRequest::STATUS_CANCELLED);
+        $donationRequest->setStatus(DonationRequestStatus::CANCELLED);
 
         $listing = $donationRequest->getListing();
         $owner = $listing?->getUser();
@@ -270,6 +278,11 @@ class DonationRequestService
         return $donationRequest;
     }
 
+    /**
+     * Ici on rend l'annonce à nouveau disponible.
+     * Pour rester cohérent métier, on rétrograde aussi l'ancienne demande ACCEPTED en CANCELLED.
+     * Tu peux choisir REFUSED à la place, mais il faut choisir un comportement clair.
+     */
     public function markListingAsAvailableAgain(int $listingId, User $currentUser): Listing
     {
         $listing = $this->listingRepository->find($listingId);
@@ -282,16 +295,50 @@ class DonationRequestService
             throw new AccessDeniedHttpException('Accès refusé.');
         }
 
-        if ($listing->getStatus() === Listing::STATUS_DONNEE) {
+        if ($listing->getStatus() === ListingStatus::DONNEE) {
             throw new BadRequestHttpException('Une annonce déjà donnée ne peut pas être remise disponible.');
         }
 
-        $listing->setStatus(Listing::STATUS_DISPONIBLE);
-        $this->em->flush();
+        $acceptedRequest = $this->donationRequestRepository->findAcceptedByListing($listing);
+
+        $this->em->wrapInTransaction(function () use ($listing, $acceptedRequest, $currentUser) {
+            $listing->setStatus(ListingStatus::DISPONIBLE);
+
+            if ($acceptedRequest) {
+                $acceptedRequest->setStatus(DonationRequestStatus::CANCELLED);
+
+                $acceptedUser = $acceptedRequest->getUser();
+                if ($acceptedUser) {
+                    $this->notificationService->create(
+                        recipient: $acceptedUser,
+                        type: Notification::TYPE_REQUEST_CANCELLED,
+                        title: 'Réservation annulée',
+                        message: sprintf(
+                            'Le don "%s" a été remis disponible par son propriétaire.',
+                            $listing->getTitle()
+                        ),
+                        actor: $currentUser,
+                        listing: $listing,
+                        donationRequest: $acceptedRequest,
+                        data: [
+                            'listingId' => $listing->getId(),
+                            'donationRequestId' => $acceptedRequest->getId(),
+                        ]
+                    );
+                }
+            }
+
+            $this->em->flush();
+        });
 
         return $listing;
     }
 
+    /**
+     * Version plus stricte :
+     * on n'autorise le passage à DONNEE que si l'annonce est RESERVEE.
+     * C'est plus cohérent avec ton workflow métier.
+     */
     public function markListingAsGiven(int $listingId, User $currentUser): Listing
     {
         $listing = $this->listingRepository->find($listingId);
@@ -304,11 +351,15 @@ class DonationRequestService
             throw new AccessDeniedHttpException('Accès refusé.');
         }
 
-        if ($listing->getStatus() === Listing::STATUS_DONNEE) {
+        if ($listing->getStatus() === ListingStatus::DONNEE) {
             throw new BadRequestHttpException('Cette annonce est déjà marquée comme donnée.');
         }
 
-        $listing->setStatus(Listing::STATUS_DONNEE);
+        if ($listing->getStatus() !== ListingStatus::RESERVEE) {
+            throw new BadRequestHttpException('Seule une annonce RESERVEE peut être marquée comme donnée.');
+        }
+
+        $listing->setStatus(ListingStatus::DONNEE);
         $this->em->flush();
 
         return $listing;
