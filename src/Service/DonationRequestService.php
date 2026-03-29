@@ -364,4 +364,10 @@ class DonationRequestService
 
         return $listing;
     }
+
+    public function getMyRequests(User $currentUser): array
+    {
+        return $this->donationRequestRepository->findMine($currentUser);
+    }
+    
 }

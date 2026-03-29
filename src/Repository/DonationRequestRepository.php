@@ -88,4 +88,19 @@ class DonationRequestRepository extends ServiceEntityRepository
             ->getQuery()
             ->getOneOrNullResult();
     }
+
+   
+    public function findMine(User $user): array
+{
+    return $this->createQueryBuilder('dr')
+        ->leftJoin('dr.listing', 'l')
+        ->addSelect('l')
+        ->leftJoin('l.listingPhotos', 'lp')
+        ->addSelect('lp')
+        ->andWhere('dr.user = :user')
+        ->setParameter('user', $user)
+        ->orderBy('dr.id', 'DESC')
+        ->getQuery()
+        ->getResult();
+}
 }

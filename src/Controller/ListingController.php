@@ -31,6 +31,29 @@ final class ListingController extends AbstractController
         return $this->json($data);
     }
 
+    // Methode qui permet d'afficher les dons d'un utilisateur en particulier
+
+    #[IsGranted('ROLE_USER')]
+    #[Route('/mine', methods: ['GET'])]
+    public function mine(ListingRepository $repo, Request $request): JsonResponse
+    {
+        $user = $this->getUser();
+
+        if (!$user) {
+            return $this->json(['message' => 'Non authentifié'], 401);
+        }
+
+        $listings = $repo->findMine($user);
+        $baseUrl = $request->getSchemeAndHttpHost();
+
+        $data = array_map(
+            fn (Listing $listing) => $this->serializeListing($listing, $baseUrl, true),
+            $listings
+        );
+
+        return $this->json($data);
+    }
+
     #[Route('/{id}', methods: ['GET'])]
     public function show(Listing $listing, Request $request): JsonResponse
     {

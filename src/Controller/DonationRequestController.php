@@ -56,6 +56,65 @@ final class DonationRequestController extends AbstractController
     }
 
     #[IsGranted('ROLE_USER')]
+#[Route('/requests/mine', methods: ['GET'])]
+public function mine(
+    DonationRequestService $donationRequestService
+): JsonResponse {
+    $user = $this->getUser();
+
+    if (!$user instanceof User) {
+        return $this->json(['message' => 'Non authentifié'], 401);
+    }
+
+    $donationRequests = $donationRequestService->getMyRequests($user);
+
+    return $this->json(array_map(
+        fn (DonationRequest $donationRequest) => $this->serializeMyDonationRequest($donationRequest),
+        $donationRequests
+    ));
+}
+
+private function serializeMyDonationRequest(DonationRequest $donationRequest): array
+{
+    $listing = $donationRequest->getListing();
+    $user = $donationRequest->getUser();
+
+    $photo = null;
+    if ($listing && count($listing->getListingPhotos()) > 0) {
+        $firstPhoto = $listing->getListingPhotos()->first();
+        if ($firstPhoto) {
+            $photo = [
+                'id' => $firstPhoto->getId(),
+                'url' => $firstPhoto->getUrl(),
+            ];
+        }
+    }
+
+    return [
+        'id' => $donationRequest->getId(),
+        'message' => $donationRequest->getMessage(),
+        'status' => $donationRequest->getStatus()?->value,
+        'createdAt' => $donationRequest->getCreatedAt()?->format('Y-m-d H:i:s'),
+        'listing' => [
+            'id' => $listing?->getId(),
+            'title' => $listing?->getTitle(),
+            'description' => $listing?->getDescription(),
+            'category' => $listing?->getCategory(),
+            'quantity' => $listing?->getQuantity(),
+            'city' => $listing?->getCity(),
+            'postalCode' => $listing?->getPostalCode(),
+            'expiryDate' => $listing?->getExpiryDate()?->format('Y-m-d'),
+            'status' => $listing?->getStatus()?->value,
+            'photo' => $photo,
+        ],
+        'user' => [
+            'id' => $user?->getId(),
+            'pseudo' => $user?->getPseudo(),
+        ],
+    ];
+}
+
+    #[IsGranted('ROLE_USER')]
     #[Route('/requests/{id}/accept', methods: ['POST'])]
     public function accept(
         int $id,
